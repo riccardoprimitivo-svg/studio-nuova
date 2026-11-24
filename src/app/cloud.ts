@@ -79,12 +79,12 @@ export class Auth {
     return this.cfg.url;
   }
 
-  private async post(path: string, body: unknown, token?: string): Promise<{ ok: boolean; status: number; data: any }> {
+  private async post(path: string, body: unknown, token?: string, method = "POST"): Promise<{ ok: boolean; status: number; data: any }> {
     try {
       const res = await this.fetchFn(`${this.cfg.url}${path}`, {
-        method: "POST",
+        method,
         headers: { "content-type": "application/json", apikey: this.cfg.publishableKey, ...(token ? { authorization: `Bearer ${token}` } : {}) },
-        body: JSON.stringify(body),
+        ...(method === "GET" ? {} : { body: JSON.stringify(body) }),
       });
       return { ok: res.ok, status: res.status, data: await res.json().catch(() => ({})) };
     } catch {
@@ -133,6 +133,43 @@ export class Auth {
     }
     // Con la conferma attiva, un'email già registrata risponde come una nuova: non si può distinguere.
     return "confirm";
+  }
+
+  /** Legge ciò che Supabase aggiunge all'indirizzo quando si apre il link di un'email (conferma, recupero). */
+  static readHash(hash: string): { type?: string; accessToken?: string; refreshToken?: string; expiresIn?: number; error?: string } {
+    const q = new URLSearchParams(hash.replace(/^#/, ""));
+    const out: ReturnType<typeof Auth.readHash> = {};
+    const type = q.get("type");
+    if (type) out.type = type;
+    const at = q.get("access_token");
+    if (at) out.accessToken = at;
+    const rt = q.get("refresh_token");
+    if (rt) out.refreshToken = rt;
+    const ex = Number(q.get("expires_in"));
+    if (ex > 0) out.expiresIn = ex;
+    const er = q.get("error_code") ?? q.get("error");
+    if (er) out.error = er;
+    return out;
+  }
+
+  /** Entra con il token arrivato da un link email. */
+  async adopt(t: { accessToken: string; refreshToken: string; expiresIn?: number }): Promise<void> {
+    const r = await this.post("/auth/v1/user", undefined, t.accessToken, "GET");
+    if (!r.ok || !r.data?.id) throw new CloudError("credentials", "Il link non è valido o è scaduto. Chiedine uno nuovo.");
+    this.keep({ accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: this.now() + (t.expiresIn ?? 3600), userId: r.data.id, email: r.data.email });
+  }
+
+  /** Risponde sempre allo stesso modo: non rivela se l'email è registrata. */
+  async requestReset(email: string): Promise<void> {
+    const r = await this.post("/auth/v1/recover", { email: email.trim() });
+    if (!r.ok && r.status === 429) throw this.explain(r);
+  }
+
+  async changePassword(newPassword: string): Promise<void> {
+    const token = await this.accessToken();
+    if (!token) throw new CloudError("denied", "La sessione è scaduta: accedi di nuovo.");
+    const r = await this.post("/auth/v1/user", { password: newPassword }, token, "PUT");
+    if (!r.ok) throw this.explain(r);
   }
 
   async signOut(): Promise<void> {

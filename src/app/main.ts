@@ -1,6 +1,6 @@
 // Punto d'ingresso: schermata di apertura, poi guscio dell'app (barra, menu, percorsi).
 
-import { showAccount } from "./account-view.js";
+import { showAccount, showNewPassword } from "./account-view.js";
 import { renderAdmin } from "./amministrazione.js";
 import { Auth, cloudConfig, SupabaseBackend } from "./cloud.js";
 import { renderAgenda } from "./agenda.js";
@@ -57,6 +57,35 @@ function accountFooter(): Node {
       "Esci",
     ),
   );
+}
+
+/** Se si arriva da un link email (conferma o recupero), lo gestisce e toglie i token dall'indirizzo. */
+async function fromEmailLink(): Promise<"recovery" | "in" | string | null> {
+  if (!auth || !location.hash.includes("=")) return null;
+  const t = Auth.readHash(location.hash);
+  if (!t.accessToken && !t.error) return null;
+  history.replaceState(null, "", location.pathname + location.search);
+  if (t.error) return "Il link è scaduto o è già stato usato. Chiedine uno nuovo.";
+  if (!t.accessToken || !t.refreshToken) return null;
+  try {
+    await auth.adopt({ accessToken: t.accessToken, refreshToken: t.refreshToken, ...(t.expiresIn ? { expiresIn: t.expiresIn } : {}) });
+    return t.type === "recovery" ? "recovery" : "in";
+  } catch (e) {
+    return e instanceof Error ? e.message : "Il link non è valido.";
+  }
+}
+
+async function begin() {
+  const r = await fromEmailLink();
+  if (r === "recovery" && auth) {
+    showNewPassword(app, auth, () => start());
+    return;
+  }
+  if (typeof r === "string" && r !== "in" && auth) {
+    showAccount(app, auth, () => start(), "in", r);
+    return;
+  }
+  start();
 }
 
 function start() {
@@ -192,4 +221,4 @@ async function openShell(studio: Studio) {
   render();
 }
 
-start();
+void begin();
