@@ -31,6 +31,12 @@ function fake() {
     }
     if (u.pathname === "/auth/v1/signup") return reply(200, { id: UID, email: body.email });
     if (u.pathname === "/auth/v1/logout") return reply(204, {});
+    if (u.pathname === "/auth/v1/recover") return reply(200, {});
+    if (u.pathname === "/auth/v1/user") {
+      if (!init.headers.authorization?.startsWith("Bearer L")) return reply(401, {});
+      if (init.method === "PUT") return reply(body.password === "uguale-alla-vecchia" ? 422 : body.password.length < 10 ? 422 : 200, body.password === "uguale-alla-vecchia" ? { error_code: "same_password" } : body.password.length < 10 ? { error_code: "weak_password" } : { id: UID, email: "a@b.it" });
+      return reply(200, { id: UID, email: "a@b.it" });
+    }
     if (!init.headers.authorization?.startsWith("Bearer A")) return reply(401, {});
     const table = u.pathname.replace("/rest/v1/", "");
     const t = db[table];
@@ -129,4 +135,31 @@ test("con la sessione scaduta il salvataggio fallisce con un messaggio chiaro", 
   const backend = new SupabaseBackend(auth, fetchFn);
   await auth.signOut();
   await assert.rejects(() => backend.list(), (e) => e instanceof CloudError && e.code === "denied");
+});
+
+test("il link dell'email: lettura dell'indirizzo ed ingresso", async () => {
+  const t = Auth.readHash("#access_token=Lx&refresh_token=Ry&expires_in=3600&token_type=bearer&type=recovery");
+  assert.deepEqual(t, { type: "recovery", accessToken: "Lx", refreshToken: "Ry", expiresIn: 3600 });
+  assert.equal(Auth.readHash("#error=access_denied&error_code=otp_expired&error_description=x").error, "otp_expired");
+  assert.deepEqual(Auth.readHash(""), {});
+  const { fetchFn } = fake();
+  const auth = new Auth(cfg, fetchFn);
+  await auth.adopt({ accessToken: "Lx", refreshToken: "Ry", expiresIn: 3600 });
+  assert.equal(auth.userId, UID);
+  assert.equal(await auth.accessToken(), "Lx");
+  const bad = new Auth(cfg, fetchFn);
+  await bad.signOut();
+  await assert.rejects(() => bad.adopt({ accessToken: "zzz", refreshToken: "r" }), CloudError);
+});
+
+test("password dimenticata: la richiesta non rivela nulla; la nuova password va rispettata", async () => {
+  const { fetchFn, calls } = fake();
+  const auth = new Auth(cfg, fetchFn);
+  await auth.requestReset("qualcuno@esempio.it");
+  assert.ok(calls.some((c) => c.path === "/auth/v1/recover"));
+  await auth.adopt({ accessToken: "Lx", refreshToken: "Ry" });
+  await assert.rejects(() => auth.changePassword("corta"), (e) => e.code === "weak");
+  await auth.changePassword("una-password-lunga");
+  await auth.changePassword("uguale-alla-vecchia"); // stessa password: non è un errore
+  assert.ok(calls.some((c) => c.init.method === "PUT"));
 });

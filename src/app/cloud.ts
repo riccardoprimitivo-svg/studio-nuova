@@ -169,6 +169,8 @@ export class Auth {
     const token = await this.accessToken();
     if (!token) throw new CloudError("denied", "La sessione è scaduta: accedi di nuovo.");
     const r = await this.post("/auth/v1/user", { password: newPassword }, token, "PUT");
+    // Se la nuova password è uguale alla vecchia il risultato voluto c'è già: si prosegue.
+    if (!r.ok && String(r.data?.error_code ?? r.data?.code ?? "") === "same_password") return;
     if (!r.ok) throw this.explain(r);
   }
 
