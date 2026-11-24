@@ -1,0 +1,19 @@
+{
+  "name": "studio-nuova",
+  "private": true,
+  "type": "module",
+  "version": "0.0.2",
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "tsc -p . && node --test \"test/*.test.mjs\"",
+    "test:rls": "bash db/run-rls-test.sh",
+    "start": "tsc -p . && node scripts/serve.mjs",
+    "build:static": "tsc -p . && node scripts/build-static.mjs"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
